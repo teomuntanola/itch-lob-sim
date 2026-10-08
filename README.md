@@ -69,11 +69,29 @@ final BBO         : ...
 
 ## Benchmarks
 
-Add your own results here once you have run real data. Record the hardware, OS, compiler/flags, the date file, and the symbol, e.g.:
+Replay of the NASDAQ ITCH 5.0 sample file `01302019.NASDAQ_ITCH50` (30 Jan 2019), symbol AAPL: 368,366,634 messages in the file, 1,656,597 of them applied to the AAPL book.
 
-| Machine | OS | Compiler | File / symbol | p50 | p99 | p99.9 |
-|---|---|---|---|---|---|---|
-| _fill in_ | _fill in_ | _fill in_ | _fill in_ | | | |
+Latency is the wall time of one book update: two `steady_clock` reads around the call, so about 36 ns of clock overhead is included in every sample. Median of 5 runs, process pinned to logical CPU 3, input read from an already-decompressed file.
+
+| Percentile | Latency (ns) | Range over 5 runs (ns) |
+|---|---|---|
+| p50 | 124 | 118 - 126 |
+| p90 | 357 | 331 - 399 |
+| p99 | 930 | 870 - 1,159 |
+| p99.9 | 4,217 | 4,103 - 5,506 |
+
+p99.99 and max are not reported: they swing by 3x between runs and are dominated by OS scheduling noise on Windows/WSL2.
+
+**Setup:** Intel Core i5-12450H (12 logical CPUs), 7.6 GiB RAM visible to WSL2, Windows host running WSL2 Ubuntu (kernel 6.18.40.1-microsoft-standard-WSL2), GCC 15.2.0, CMake Release build with `-march=native`.
+
+**Sanity checks on the full day:** 0 unknown order references, empty book at the close, and 552,947 BBO changes between 09:35 and 15:55 with 0 crossed quotes and a mean quoted spread of $0.0232 (averaged per event, not per unit of time).
+
+**Reproduce:**
+
+```bash
+gzip -dk 01302019.NASDAQ_ITCH50.gz        # ~11 GB decompressed
+for i in 1 2 3 4 5; do ./build/itch_sim --symbol AAPL --pin 3 01302019.NASDAQ_ITCH50 | grep "book update"; done
+```
 
 ## Layout
 
