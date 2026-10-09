@@ -57,30 +57,38 @@ final BBO         : ...
 ## Design
 
 - **Parser** (`include/itch/parser.hpp`): decodes ITCH 5.0 messages `R A F E C X D U` (big-endian, BinaryFILE framing with a 2-byte length prefix). Everything else is counted as unsupported and skipped. `read_frames` works on files and pipes.
-- **Order book** (`include/itch/order_book.hpp`): per-order hash map for O(1) lookup by order reference; per-side dense price ladder over a window of 4096 ticks ($40.96 at $0.01 tick) plus a sparse overflow map for levels outside it. When the mid leaves the central half of the window, the book **re-centers** (rebuilds the ladder around the new mid). The best price is cached per side and only recomputed when the best level empties.
+- **Order book** (`include/itch/order_book.hpp`): per-order lookup in a flat open-addressing hash table (16-byte slots, linear probing, backward-shift delete; the order reference is used directly as the index because ITCH references are near-sequential); per-side dense price ladder over a window of 4096 ticks ($40.96 at $0.01 tick) plus a sparse overflow map for levels outside it. When the mid leaves the central half of the window, the book **re-centers** (rebuilds the ladder around the new mid). The best price is cached per side and only recomputed when the best level empties.
 - **Latency** (`include/itch/latency.hpp`): two monotonic clock reads around each book update; all samples are stored and exact percentiles (nearest-rank) are computed at the end. CSV export happens after the stop timestamp, so it is not in the measurement. The measured timer overhead is printed and is included in every sample.
-- **Tests** (`tests/test_main.cpp`): parser field decoding, stream framing across buffer refills, book operations, re-centering, and a randomized cross-check of 200k operations against a naive `std::map` reference book (best bid/offer every step, depth every 25 steps).
+- **Tests** (`tests/test_main.cpp`): parser field decoding, stream framing across buffer refills, book operations, re-centering, and a randomized cross-check of 200k operations against a naive `std::map` reference book (best bid/offer every step, depth every 25 steps). The flat hash table is cross-checked against `std::unordered_map` over 1.8M random operations.
 
 ## Limitations
 
 - Single symbol per run; one tick size for the whole book (default $0.01, prices are quantized down to it, so sub-penny orders are merged into the penny below).
 - Only add / execute / cancel / delete / replace messages are applied. Trade messages (`P`, `Q`, `B`), halts, and auction/cross events are ignored.
-- `std::unordered_map` for the order map is a deliberate first version; at hundreds of thousands of live orders its cache misses dominate p50. Replacing it is the obvious next optimization.
+- The order table uses the key as its hash index (see Benchmarks): right for ITCH's near-sequential order references, wrong for arbitrary keys. It grows by doubling, which causes rare millisecond-scale pauses; it is pre-sized for 131,072 live orders.
 
 ## Benchmarks
 
 Replay of the NASDAQ ITCH 5.0 sample file `01302019.NASDAQ_ITCH50` (30 Jan 2019), symbol AAPL: 368,366,634 messages in the file, 1,656,597 of them applied to the AAPL book.
 
-Latency is the wall time of one book update: two `steady_clock` reads around the call, so about 36 ns of clock overhead is included in every sample. Median of 5 runs, process pinned to logical CPU 3, input read from an already-decompressed file.
+Latency is the wall time of one book update: two `steady_clock` reads around the call, so about 36 ns of clock overhead is included in every sample. Process pinned to logical CPU 3, input read from an already-decompressed file.
 
-| Percentile | Latency (ns) | Range over 5 runs (ns) |
-|---|---|---|
-| p50 | 124 | 118 - 126 |
-| p90 | 357 | 331 - 399 |
-| p99 | 930 | 870 - 1,159 |
-| p99.9 | 4,217 | 4,103 - 5,506 |
+### Order table: `std::unordered_map` vs flat open-addressing table
 
-p99.99 and max are not reported: they swing by 3x between runs and are dominated by OS scheduling noise on Windows/WSL2.
+5 rounds; in each round the builds were run back to back, so comparisons are paired within a round. Values are medians over the 5 rounds (min - max in brackets), in ns.
+
+| Percentile | `std::unordered_map` | Flat table (key as index) | Change (paired median) |
+|---|---|---|---|
+| p50 | 127 (72 - 130) | 99 (61 - 118) | -19 % |
+| p90 | 397 (266 - 486) | 275 (207 - 323) | -24 % |
+| p99 | 1,115 (794 - 1,527) | 622 (406 - 632) | -53 % |
+| p99.9 | 4,450 (2,206 - 4,949) | 2,736 (1,317 - 2,854) | -42 % |
+
+The flat table was better in all 5 rounds at p50, p90, p99 and p99.9. The host sped up between rounds 3 and 4 (every build got about 40 % faster), which is why the absolute ranges are wide: compare builds within a round, not across rounds.
+
+A first version with Fibonacci hashing was **34 % slower at p50** than `std::unordered_map` (while 57 % better at p99). The likely cause, not isolated with a profiler, is locality: ITCH order references are close to sequential and `std::hash` on an integer is the identity, so consecutive orders sit in neighbouring cache lines; a multiplicative hash scatters them. Using the key directly as the index fixed the median. Probe lengths were not instrumented, only end-to-end latency, and a key-as-index hash can cluster on other key patterns.
+
+p99.99 and max are not reported: they swing by 3x between runs and are dominated by OS scheduling noise on Windows/WSL2. Table growth also shows up as rare millisecond-scale outliers in the max.
 
 **Setup:** Intel Core i5-12450H (12 logical CPUs), 7.6 GiB RAM visible to WSL2, Windows host running WSL2 Ubuntu (kernel 6.18.40.1-microsoft-standard-WSL2), GCC 15.2.0, CMake Release build with `-march=native`.
 

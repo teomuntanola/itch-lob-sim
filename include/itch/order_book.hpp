@@ -3,9 +3,9 @@
 #include <cstdint>
 #include <map>
 #include <optional>
-#include <unordered_map>
 #include <vector>
 
+#include "itch/flat_map.hpp"
 #include "itch/types.hpp"
 
 namespace itch {
@@ -37,7 +37,14 @@ class OrderBook {
   uint64_t unknown_ref_count() const { return unknown_refs_; }
 
  private:
-  struct Order { uint32_t price; uint32_t shares; Side side; };
+  // 8 bytes: price, 31-bit remaining shares, side bit (ITCH share counts fit in 31 bits).
+  struct Order {
+    uint32_t price;
+    uint32_t shares : 31;
+    uint32_t ask : 1;
+    Side side() const { return ask ? Side::Ask : Side::Bid; }
+  };
+  static_assert(sizeof(Order) == 8, "Order must stay 8 bytes");
   struct SideBook {
     std::vector<uint64_t> ladder;
     std::map<uint32_t, uint64_t> far;  // levels outside the window
@@ -62,7 +69,7 @@ class OrderBook {
   uint32_t base_ = 0;
   bool initialized_ = false;
   SideBook sides_[2];
-  std::unordered_map<uint64_t, Order> orders_;
+  FlatU64Map<Order> orders_;
   uint64_t recenters_ = 0;
   uint64_t unknown_refs_ = 0;
 };

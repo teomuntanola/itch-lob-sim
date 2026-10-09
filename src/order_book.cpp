@@ -8,7 +8,7 @@ namespace itch {
 OrderBook::OrderBook(uint32_t tick, uint32_t window) : tick_(tick), window_(window) {
   sides_[0].ladder.assign(window_, 0);
   sides_[1].ladder.assign(window_, 0);
-  orders_.reserve(1u << 20);
+  orders_.reserve(1u << 17);
 }
 
 uint64_t OrderBook::qty_at(const SideBook& sb, uint32_t px) const {
@@ -129,47 +129,50 @@ void OrderBook::maybe_recenter() {
 
 void OrderBook::add(uint64_t ref, Side side, uint32_t shares, uint32_t price) {
   if (shares == 0) return;
-  if (orders_.count(ref)) remove(ref);  // defensive: duplicate ref
+  if (orders_.find(ref)) remove(ref);  // defensive: duplicate ref
   price -= price % tick_;
   if (!initialized_) recenter(price);
-  orders_[ref] = Order{price, shares, side};
+  Order o;
+  o.price = price;
+  o.shares = shares;
+  o.ask = (side == Side::Ask);
+  orders_.insert(ref, o);
   level_add(side, price, shares);
   maybe_recenter();
 }
 
 void OrderBook::reduce(uint64_t ref, uint32_t shares) {
-  auto it = orders_.find(ref);
-  if (it == orders_.end()) {
+  Order* o = orders_.find(ref);
+  if (!o) {
     ++unknown_refs_;
     return;
   }
-  Order& o = it->second;
-  const uint32_t d = std::min(shares, o.shares);
-  const Side s = o.side;
-  const uint32_t px = o.price;
-  o.shares -= d;
-  if (o.shares == 0) orders_.erase(it);
+  const uint32_t d = std::min<uint32_t>(shares, o->shares);
+  const Side s = o->side();
+  const uint32_t px = o->price;
+  o->shares = o->shares - d;
+  if (o->shares == 0) orders_.erase(ref);
   level_sub(s, px, d);
 }
 
 void OrderBook::remove(uint64_t ref) {
-  auto it = orders_.find(ref);
-  if (it == orders_.end()) {
+  const Order* p = orders_.find(ref);
+  if (!p) {
     ++unknown_refs_;
     return;
   }
-  const Order o = it->second;
-  orders_.erase(it);
-  level_sub(o.side, o.price, o.shares);
+  const Order o = *p;
+  orders_.erase(ref);
+  level_sub(o.side(), o.price, o.shares);
 }
 
 void OrderBook::replace(uint64_t old_ref, uint64_t new_ref, uint32_t shares, uint32_t price) {
-  auto it = orders_.find(old_ref);
-  if (it == orders_.end()) {
+  const Order* p = orders_.find(old_ref);
+  if (!p) {
     ++unknown_refs_;
     return;
   }
-  const Side s = it->second.side;  // a replace keeps the side
+  const Side s = p->side();  // a replace keeps the side
   remove(old_ref);
   add(new_ref, s, shares, price);
 }

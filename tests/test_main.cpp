@@ -8,6 +8,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "itch/flat_map.hpp"
 #include "itch/latency.hpp"
 #include "itch/order_book.hpp"
 #include "itch/parser.hpp"
@@ -161,6 +162,42 @@ static void test_read_frames() {
   std::remove(path);
   CHECK(n == 60000);
   CHECK(adds == 20000);
+}
+
+// ---------- flat hash map ----------
+static void test_flat_map() {
+  FlatU64Map<uint32_t> m(16);
+  std::unordered_map<uint64_t, uint32_t> ref;
+  std::mt19937_64 rng(777);
+  // Small key range => many collisions, wrap-around probe runs and heavy erase/reinsert.
+  for (int round = 0; round < 3; ++round) {
+    const uint64_t range = round == 0 ? 64 : (round == 1 ? 5000 : 400000);
+    for (int step = 0; step < 600000; ++step) {
+      const uint64_t k = rng() % range;
+      const uint32_t op = uint32_t(rng() % 100);
+      if (op < 45) {
+        const uint32_t v = uint32_t(rng());
+        m.insert(k, v);
+        ref[k] = v;
+      } else if (op < 85) {
+        const bool a = m.erase(k);
+        const bool b = ref.erase(k) > 0;
+        if (a != b) { CHECK(a == b); return; }
+      } else {
+        const uint32_t* f = m.find(k);
+        auto it = ref.find(k);
+        if ((f != nullptr) != (it != ref.end()) || (f && *f != it->second)) {
+          CHECK(false);
+          return;
+        }
+      }
+      if (m.size() != ref.size()) { CHECK(m.size() == ref.size()); return; }
+    }
+  }
+  for (const auto& kv : ref) {
+    const uint32_t* f = m.find(kv.first);
+    if (!f || *f != kv.second) { CHECK(false); return; }
+  }
 }
 
 // ---------- order book ----------
@@ -379,6 +416,7 @@ static void test_pipeline() {
 int main() {
   test_parser();
   test_read_frames();
+  test_flat_map();
   test_book_basic();
   test_book_recenter();
   test_book_random_vs_reference();
