@@ -413,6 +413,49 @@ static void test_pipeline() {
   CHECK(s.count == 4 && s.min <= s.p50 && s.p50 <= s.p99 && s.p99 <= s.max);
 }
 
+static void test_lookup_and_trades() {
+  OrderBook b;
+  b.add(1, Side::Ask, 100, 1000100);
+  uint32_t px = 0;
+  Side sd = Side::Bid;
+  CHECK(b.lookup(1, px, sd) && px == 1000100 && sd == Side::Ask);
+  CHECK(!b.lookup(2, px, sd));
+
+  const char* path = "itch_test_trades.csv";
+  {
+    OrderBook book;
+    LatencyRecorder rec;
+    PipelineOptions opt;
+    opt.symbol = "TEST";
+    opt.trades_path = path;
+    opt.export_from_ns = 100;
+    opt.export_to_ns = 200;
+    Pipeline p(opt, book, rec);
+    auto feed = [&](const Buf& m) { p.process_frame(m.b.data(), m.b.size()); };
+    feed(msg_dir(5, "TEST"));
+    feed(msg_add(5, 50, 1, 'B', 100, "TEST", 1000000));
+    feed(msg_exec(5, 90, 1, 10));    // before the window: not exported
+    feed(msg_exec(5, 150, 1, 20));   // inside the window
+    feed(msg_exec(5, 250, 1, 30));   // after the window: not exported
+    CHECK(book.best_bid() && book.best_bid()->qty == 40);
+  }
+  std::FILE* f = std::fopen(path, "r");
+  CHECK(f != nullptr);
+  if (f) {
+    char line[256];
+    int rows = 0;
+    bool header_ok = false, row_ok = false;
+    while (std::fgets(line, sizeof(line), f)) {
+      if (rows == 0) header_ok = std::strncmp(line, "ts_ns,price,shares,resting_side", 31) == 0;
+      if (rows == 1) row_ok = std::strncmp(line, "150,100.0000,20,bid", 19) == 0;
+      ++rows;
+    }
+    std::fclose(f);
+    std::remove(path);
+    CHECK(rows == 2 && header_ok && row_ok);
+  }
+}
+
 int main() {
   test_parser();
   test_read_frames();
@@ -421,6 +464,7 @@ int main() {
   test_book_recenter();
   test_book_random_vs_reference();
   test_pipeline();
+  test_lookup_and_trades();
   if (g_fail) {
     std::fprintf(stderr, "%d check(s) FAILED\n", g_fail);
     return 1;

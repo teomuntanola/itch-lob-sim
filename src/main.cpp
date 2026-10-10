@@ -16,14 +16,27 @@
 #include <sched.h>
 #endif
 
+// "HH:MM:SS" -> nanoseconds since midnight; exits on bad input.
+static uint64_t parse_clock(const char* text) {
+  unsigned h = 0, m = 0, sec = 0;
+  if (std::sscanf(text, "%u:%u:%u", &h, &m, &sec) != 3 || h > 23 || m > 59 || sec > 59) {
+    std::fprintf(stderr, "bad time '%s' (expected HH:MM:SS)\n", text);
+    std::exit(2);
+  }
+  return (uint64_t(h) * 3600 + uint64_t(m) * 60 + sec) * 1000000000ULL;
+}
+
 static void usage() {
   std::fputs(
       "usage: itch_sim --symbol SYM [options] <file|->\n"
       "  --symbol SYM      stock to replay (required), e.g. AAPL\n"
       "  --bbo FILE        write best bid/offer changes to CSV\n"
       "  --depth FILE      write depth snapshots to CSV\n"
+      "  --trades FILE     write executions (resting-order price and side) to CSV\n"
       "  --levels N        depth levels per side (default 5)\n"
       "  --depth-ms N      market-time ms between depth snapshots (default 1000)\n"
+      "  --from HH:MM:SS   only export CSV rows from this market time (default: whole day)\n"
+      "  --to HH:MM:SS     only export CSV rows up to this market time\n"
       "  --pin CPU         pin the process to a CPU core (Linux only)\n"
       "  <file|->          decompressed ITCH 5.0 BinaryFILE, or '-' for stdin\n"
       "                    e.g. gzip -dc 01302019.NASDAQ_ITCH50.gz | itch_sim --symbol AAPL -\n",
@@ -47,6 +60,9 @@ int main(int argc, char** argv) {
     if (a == "--symbol") opt.symbol = next("--symbol");
     else if (a == "--bbo") opt.bbo_path = next("--bbo");
     else if (a == "--depth") opt.depth_path = next("--depth");
+    else if (a == "--trades") opt.trades_path = next("--trades");
+    else if (a == "--from") opt.export_from_ns = parse_clock(next("--from"));
+    else if (a == "--to") opt.export_to_ns = parse_clock(next("--to"));
     else if (a == "--levels") opt.depth_levels = std::strtoull(next("--levels"), nullptr, 10);
     else if (a == "--depth-ms") opt.depth_interval_ns = std::strtoull(next("--depth-ms"), nullptr, 10) * 1000000ULL;
     else if (a == "--pin") pin = std::atoi(next("--pin"));

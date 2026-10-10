@@ -32,6 +32,9 @@ class OrderBook {
   // Top `n` levels, best first (bids descending, asks ascending).
   std::vector<Level> depth(Side side, size_t n) const;
 
+  // Looks up a live order without modifying the book. Returns false if unknown.
+  bool lookup(uint64_t ref, uint32_t& price, Side& side) const;
+
   size_t order_count() const { return orders_.size(); }
   uint64_t recenter_count() const { return recenters_; }
   uint64_t unknown_ref_count() const { return unknown_refs_; }

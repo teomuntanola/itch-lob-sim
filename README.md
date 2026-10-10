@@ -1,5 +1,7 @@
 # itch-lob-sim
 
+![AAPL, first two minutes of the 30 Jan 2019 open, rebuilt from raw NASDAQ ITCH 5.0](docs/aapl_open.gif)
+
 L2 order book simulator in C++20. It replays NASDAQ TotalView-ITCH 5.0 historical data for one symbol, rebuilds the book from per-order (L3) events, measures the latency of every book update, and exports best bid/offer and market depth to CSV.
 
 ```
@@ -54,6 +56,19 @@ final BBO         : ...
 `bbo.csv`: `ts_ns,bid_px,bid_qty,ask_px,ask_qty` (a row each time the BBO changes; `ts_ns` is nanoseconds since midnight).
 `depth.csv`: `ts_ns,side,level,price,qty` (long format, top N levels per side).
 
+### Visualizing the book
+
+`--trades FILE` writes every execution (resting-order price, shares, side) and `--from` / `--to` (market time, `HH:MM:SS`) limit the CSV exports to a window, so a day-long replay does not produce a day-long CSV. Timing is not affected: exports happen after the stop timestamp.
+
+```bash
+./build/itch_sim --symbol AAPL --from 09:30:00 --to 09:32:00 --depth-ms 100 --levels 20 \
+    --bbo bbo.csv --depth depth.csv --trades trades.csv 01302019.NASDAQ_ITCH50
+python3 tools/plot_book.py --depth depth.csv --bbo bbo.csv --trades trades.csv \
+    --title "AAPL, 30 Jan 2019, NASDAQ ITCH 5.0" --out dashboard.png --gif dashboard.gif
+```
+
+The dashboard has three panels on a shared market-time axis: (1) resting liquidity per price level (top 20 levels per side) with the best bid and ask, the micro-price and executions; (2) the quoted spread in cents; (3) order flow imbalance (Cont, Kukanov, Stoikov) summed over a rolling 1 s window. Executions: green triangle = a resting ask was executed (buyer initiated), red triangle = a resting bid was executed (seller initiated). `--badge` adds a short caption (for example measured latency with the hardware) and `--no-heatmap` hides the liquidity background. It needs `python3`, `numpy` and `matplotlib`. For `C` messages (executed at a price different from the displayed one) the exported price is the order's displayed price.
+
 ## Design
 
 - **Parser** (`include/itch/parser.hpp`): decodes ITCH 5.0 messages `R A F E C X D U` (big-endian, BinaryFILE framing with a 2-byte length prefix). Everything else is counted as unsupported and skipped. `read_frames` works on files and pipes.
@@ -65,7 +80,7 @@ final BBO         : ...
 
 - Single symbol per run; one tick size for the whole book (default $0.01, prices are quantized down to it, so sub-penny orders are merged into the penny below).
 - Only add / execute / cancel / delete / replace messages are applied. Trade messages (`P`, `Q`, `B`), halts, and auction/cross events are ignored.
-- The order table uses the key as its hash index (see Benchmarks): right for ITCH's near-sequential order references, wrong for arbitrary keys. It grows by doubling, which causes rare millisecond-scale pauses; it is pre-sized for 131,072 live orders.
+- The order table uses the key as its hash index (see Benchmarks). That suits ITCH order references, which are increasing and, for any one symbol, sparse (AAPL is 0.45 % of the messages on 30 Jan 2019), but it is fragile for dense keys: on a single-symbol synthetic stream with *consecutive* references, p99 was about 15 us against 0.4 us for a multiplicative hash (Linux container, 5M messages), because backward-shift deletion scans the whole probe cluster. `gen_synthetic` therefore uses sparse references. The table also grows by doubling, which causes rare millisecond-scale pauses; it is pre-sized for 131,072 live orders.
 
 ## Benchmarks
 
@@ -106,7 +121,7 @@ for i in 1 2 3 4 5; do ./build/itch_sim --symbol AAPL --pin 3 01302019.NASDAQ_IT
 ```
 include/itch/   types, parser, order_book, latency, pipeline
 src/            order_book.cpp, latency.cpp, main.cpp
-tools/          gen_synthetic.cpp
+tools/          gen_synthetic.cpp, plot_book.py
 tests/          test_main.cpp
 .github/        CI (Linux, macOS, Windows)
 ```

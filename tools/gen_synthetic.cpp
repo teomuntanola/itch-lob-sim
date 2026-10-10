@@ -65,7 +65,11 @@ int main(int argc, char** argv) {
 
   const uint16_t locate = 1;
   uint64_t ts = 34200ULL * 1000000000ULL;  // 09:30:00 in ns since midnight
-  uint64_t next_ref = 1;
+  // Order references are global across all symbols on the exchange, so one symbol's
+  // references are sparse (AAPL is under 1% of the messages in the 2019 sample file).
+  // Mimic that with random gaps (mean ~200) instead of consecutive numbers.
+  uint64_t next_ref = 0;
+  auto alloc_ref = [&]() { return next_ref += 1 + rng() % 400; };
   int64_t mid = 1000000;  // $100.00 in 1/10000 units
 
   { // Stock Directory 'R' (39 bytes)
@@ -85,7 +89,7 @@ int main(int argc, char** argv) {
     const int64_t off = int64_t(1 + rng() % 20) * 100;
     const uint32_t px = uint32_t(buy ? mid - off : mid + off);
     const uint32_t sh = uint32_t(100 * (1 + rng() % 10));
-    const uint64_t ref = next_ref++;
+    const uint64_t ref = alloc_ref();
     Buf m;
     m.u8('A'); m.u16(locate); m.u16(0); m.u48(ts);
     m.u64(ref); m.u8(buy ? 'B' : 'S'); m.u32(sh); m.raw("TEST    ", 8); m.u32(px);
@@ -125,7 +129,7 @@ int main(int argc, char** argv) {
       flush_frame(m);
       o.shares -= q;
     } else {  // Replace (keeps side; new price near mid on the same side is not tracked, use mid +- off)
-      const uint64_t nref = next_ref++;
+      const uint64_t nref = alloc_ref();
       const uint32_t sh = uint32_t(100 * (1 + rng() % 10));
       const uint32_t px = uint32_t(mid + (int64_t(rng() % 41) - 20) * 100);
       m.u8('U'); m.u16(locate); m.u16(0); m.u48(ts); m.u64(o.ref); m.u64(nref); m.u32(sh); m.u32(px);

@@ -177,6 +177,14 @@ void OrderBook::replace(uint64_t old_ref, uint64_t new_ref, uint32_t shares, uin
   add(new_ref, s, shares, price);
 }
 
+bool OrderBook::lookup(uint64_t ref, uint32_t& price, Side& side) const {
+  const Order* o = orders_.find(ref);
+  if (!o) return false;
+  price = o->price;
+  side = o->side();
+  return true;
+}
+
 std::optional<Level> OrderBook::best_bid() const {
   const SideBook& sb = sides_[0];
   if (!sb.has_best) return std::nullopt;

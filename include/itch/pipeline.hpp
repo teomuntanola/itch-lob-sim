@@ -20,6 +20,9 @@ struct PipelineOptions {
   std::string symbol;                              // e.g. "AAPL"
   std::string bbo_path;                            // empty = no BBO export
   std::string depth_path;                          // empty = no depth export
+  std::string trades_path;                         // empty = no executions export
+  uint64_t export_from_ns = 0;                     // CSV exports only cover [from, to] (ns since midnight)
+  uint64_t export_to_ns = ~0ULL;
   size_t depth_levels = 5;
   uint64_t depth_interval_ns = 1'000'000'000ULL;   // market-time interval between depth snapshots
 };
@@ -37,6 +40,13 @@ class Pipeline {
         std::fputs("ts_ns,bid_px,bid_qty,ask_px,ask_qty\n", bbo_);
       }
     }
+    if (!opt.trades_path.empty()) {
+      trades_ = std::fopen(opt.trades_path.c_str(), "w");
+      if (trades_) {
+        std::setvbuf(trades_, nullptr, _IOFBF, 1 << 20);
+        std::fputs("ts_ns,price,shares,resting_side\n", trades_);
+      }
+    }
     if (!opt.depth_path.empty()) {
       depth_ = std::fopen(opt.depth_path.c_str(), "w");
       if (depth_) {
@@ -48,6 +58,7 @@ class Pipeline {
   ~Pipeline() {
     if (bbo_) std::fclose(bbo_);
     if (depth_) std::fclose(depth_);
+    if (trades_) std::fclose(trades_);
   }
   Pipeline(const Pipeline&) = delete;
   Pipeline& operator=(const Pipeline&) = delete;
@@ -70,7 +81,17 @@ class Pipeline {
   }
   void on(const OrderExecuted& m) {
     if (!mine(m.locate)) return;
+    // The lookup is only needed for the trades CSV and happens outside the timed region.
+    uint32_t px = 0;
+    Side sd = Side::Bid;
+    const bool have = trades_ && m.ts >= opt_.export_from_ns && m.ts <= opt_.export_to_ns &&
+                      book_.lookup(m.ref, px, sd);
     timed(m.ts, [&] { book_.reduce(m.ref, m.shares); });
+    if (have) {
+      std::fprintf(trades_, "%llu,", static_cast<unsigned long long>(m.ts));
+      put_px(trades_, px);
+      std::fprintf(trades_, ",%u,%s\n", m.shares, sd == Side::Bid ? "bid" : "ask");
+    }
   }
   void on(const OrderCancel& m) {
     if (!mine(m.locate)) return;
@@ -117,6 +138,7 @@ class Pipeline {
   }
 
   void export_after(uint64_t ts) {
+    if (ts < opt_.export_from_ns || ts > opt_.export_to_ns) return;
     if (bbo_) {
       const auto bb = book_.best_bid();
       const auto ba = book_.best_ask();
@@ -153,6 +175,7 @@ class Pipeline {
   uint64_t total_ = 0, processed_ = 0, unsupported_ = 0;
   std::FILE* bbo_ = nullptr;
   std::FILE* depth_ = nullptr;
+  std::FILE* trades_ = nullptr;
   std::optional<Level> last_bb_, last_ba_;
   uint64_t next_depth_ts_ = 0;
 };
