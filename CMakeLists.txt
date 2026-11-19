@@ -28,7 +28,7 @@ else()
 endif()
 
 # Core library: order book + latency recorder (parser/pipeline are header-only).
-add_library(itchsim STATIC src/order_book.cpp src/latency.cpp)
+add_library(itchsim STATIC src/order_book.cpp src/latency.cpp src/queue_book.cpp)
 target_include_directories(itchsim PUBLIC include)
 
 add_executable(itch_sim src/main.cpp)
@@ -36,7 +36,14 @@ target_link_libraries(itch_sim PRIVATE itchsim)
 
 add_executable(gen_synthetic tools/gen_synthetic.cpp)
 
+add_executable(queue_study tools/queue_study.cpp)
+target_link_libraries(queue_study PRIVATE itchsim)
+
 enable_testing()
 add_executable(itch_tests tests/test_main.cpp)
 target_link_libraries(itch_tests PRIVATE itchsim)
 add_test(NAME itch_tests COMMAND itch_tests)
+
+add_executable(queue_tests tests/test_queue.cpp)
+target_link_libraries(queue_tests PRIVATE itchsim)
+add_test(NAME queue_tests COMMAND queue_tests)

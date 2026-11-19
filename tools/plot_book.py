@@ -27,19 +27,34 @@ import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.colors import LinearSegmentedColormap, LogNorm  # noqa: E402
 from matplotlib.gridspec import GridSpec  # noqa: E402
 
-BG = "#0a0d12"
-PANEL = "#11151c"
-GRID = "#1e2430"
-TXT = "#e1e6ed"
-MUTED = "#8b98a9"
-AXIS = "#2e3646"
-BID = "#00f076"
-ASK = "#ff3355"
-MICRO = "#00b8ff"
-SPREAD = "#b07cff"
 TICK = 0.01
-# Blue-to-white scale so the green/red price lines and markers stay readable on top.
-ICE = LinearSegmentedColormap.from_list("ice", ["#0a0d12", "#0f2a4d", "#1b5fa8", "#5fb4f5", "#ffffff"])
+
+THEMES = {
+    "dark": dict(BG="#0a0d12", PANEL="#11151c", GRID="#1e2430", TXT="#e1e6ed", MUTED="#8b98a9", AXIS="#2e3646",
+                 BID="#00f076", ASK="#ff3355", MICRO="#00b8ff", SPREAD="#b07cff", LEGTXT="#e1e6ed",
+                 OUTLINE="#e1e6ed", TITLE="#ffffff", BADGE="#00e5ff",
+                 HEAT=["#0a0d12", "#0f2a4d", "#1b5fa8", "#5fb4f5", "#ffffff"], TERMINAL=False),
+    # Bloomberg-terminal look: pure black, amber labels, monospace, price scale on the right.
+    "terminal": dict(BG="#000000", PANEL="#000000", GRID="#1c1c1c", TXT="#ffa028", MUTED="#b3731c", AXIS="#4a3510",
+                     BID="#00e676", ASK="#ff3b3b", MICRO="#00d4ff", SPREAD="#e6e6e6", LEGTXT="#d9d9d9",
+                     OUTLINE="#d9d9d9", TITLE="#ffa028", BADGE="#d9d9d9",
+                     HEAT=["#000000", "#0b1f3a", "#14508f", "#4aa3e8", "#ffffff"], TERMINAL=True),
+}
+
+
+def apply_theme(name):
+    g = globals()
+    g.update(THEMES[name])
+    g["ICE"] = LinearSegmentedColormap.from_list("ice", g["HEAT"])
+    plt.rcParams["font.family"] = "monospace" if g["TERMINAL"] else "DejaVu Sans"
+
+
+def L(text):
+    """Terminal theme uses upper-case labels."""
+    return text.upper() if TERMINAL else text
+
+
+apply_theme("terminal")
 
 
 # ----------------------------------------------------------------------------- input
@@ -144,11 +159,20 @@ def nice_ticks(lo, hi):
 
 def style(ax):
     ax.set_facecolor(PANEL)
-    ax.grid(True, color=GRID, linestyle="--", linewidth=0.5, alpha=0.6)
-    for side in ("top", "right"):
-        ax.spines[side].set_visible(False)
-    for side in ("left", "bottom"):
-        ax.spines[side].set_color(AXIS)
+    ax.grid(True, color=GRID, linestyle=":" if TERMINAL else "--", linewidth=0.6 if TERMINAL else 0.5,
+            alpha=1.0 if TERMINAL else 0.6)
+    if TERMINAL:                       # price scale on the right, like a terminal chart
+        ax.yaxis.tick_right()
+        ax.yaxis.set_label_position("right")
+        for side in ("top", "left"):
+            ax.spines[side].set_visible(False)
+        for side in ("right", "bottom"):
+            ax.spines[side].set_color(AXIS)
+    else:
+        for side in ("top", "right"):
+            ax.spines[side].set_visible(False)
+        for side in ("left", "bottom"):
+            ax.spines[side].set_color(AXIS)
     ax.tick_params(colors=MUTED, labelsize=8)
 
 
@@ -178,9 +202,9 @@ def render(axes, D, t_lo, t_hi, ylim, big=True, now_label=None):
                                 D.lo + (r1 - 1) * TICK + TICK / 2])
     i0, i1 = view(D.rb, t_lo, t_hi)
     sl = slice(i0, i1)
-    ax1.step(D.rb[sl], D.ask[sl], where="post", color=ASK, lw=1.0, label="best ask", zorder=5)
-    ax1.step(D.rb[sl], D.bid[sl], where="post", color=BID, lw=1.0, label="best bid", zorder=5)
-    ax1.step(D.rb[sl], D.mp[sl], where="post", color=MICRO, lw=0.8, ls=":", label="micro-price", zorder=7)
+    ax1.step(D.rb[sl], D.ask[sl], where="post", color=ASK, lw=1.0, label=L("best ask"), zorder=5)
+    ax1.step(D.rb[sl], D.bid[sl], where="post", color=BID, lw=1.0, label=L("best bid"), zorder=5)
+    ax1.step(D.rb[sl], D.mp[sl], where="post", color=MICRO, lw=0.8, ls=":", label=L("micro-price"), zorder=7)
     if D.trades is not None:
         tt, tp, ts_, tside = D.trades
         j0, j1 = np.searchsorted(tt, [t_lo, t_hi])
@@ -188,14 +212,14 @@ def render(axes, D, t_lo, t_hi, ylim, big=True, now_label=None):
         size = (11 if big else 14) + (5 if big else 7) * np.sqrt(ts_ / 100.0)
         buy = tside == "ask"      # a resting ask was executed -> buyer initiated
         ax1.scatter(tt[buy], tp[buy], s=size[buy], c=BID, marker="^", edgecolors="none",
-                    alpha=0.85, label="buy-initiated trade", zorder=6)
+                    alpha=0.85, label=L("buy-initiated trade"), zorder=6)
         ax1.scatter(tt[~buy], tp[~buy], s=size[~buy], c=ASK, marker="v", edgecolors="none",
-                    alpha=0.85, label="sell-initiated trade", zorder=6)
+                    alpha=0.85, label=L("sell-initiated trade"), zorder=6)
     ax1.set_ylim(*ylim)
-    ax1.set_ylabel("price ($)", color=TXT, fontsize=9, fontweight="bold")
+    ax1.set_ylabel(L("price ($)"), color=TXT, fontsize=9, fontweight="bold")
     ax1.yaxis.set_major_formatter(matplotlib.ticker.FormatStrFormatter("%.2f"))
     ax1.legend(loc="lower left", bbox_to_anchor=(0.0, 1.015), ncol=5, facecolor=BG, edgecolor="none",
-               labelcolor=TXT, fontsize=fs, framealpha=0.0, borderaxespad=0.0, columnspacing=1.2,
+               labelcolor=LEGTXT, fontsize=fs, framealpha=0.0, borderaxespad=0.0, columnspacing=1.2,
                handletextpad=0.4, markerscale=1.8)
     if now_label:
         ax1.text(0.995, 0.97, now_label, transform=ax1.transAxes, ha="right", va="top", color=TXT,
@@ -204,24 +228,24 @@ def render(axes, D, t_lo, t_hi, ylim, big=True, now_label=None):
     # ---- panel 2: spread in cents (fixed-rate samples plus a rolling median)
     s0, s1 = view(D.sp_t, t_lo, t_hi)
     ax2.step(D.sp_t[s0:s1], D.sp_raw[s0:s1], where="post", color=SPREAD, lw=0.5, alpha=0.45,
-             label="%d ms samples" % int(D.dt / 1e6))
+             label=L("%d ms samples" % int(D.dt / 1e6)))
     ax2.step(D.sp_t[s0:s1], D.sp_med[s0:s1], where="post", color=SPREAD, lw=1.5,
-             label="%g s median" % D.sp_win)
-    ax2.fill_between(D.sp_t[s0:s1], 0, D.sp_med[s0:s1], step="post", color=SPREAD, alpha=0.18)
+             label=L("%g s median" % D.sp_win))
+    ax2.fill_between(D.sp_t[s0:s1], 0, D.sp_med[s0:s1], step="post", color=SPREAD, alpha=0.12 if TERMINAL else 0.18)
     ax2.set_ylim(0, D.spread_top)
-    ax2.set_ylabel("spread (cents)", color=TXT, fontsize=8.5, fontweight="bold")
-    ax2.legend(loc="upper right", facecolor=PANEL, edgecolor=AXIS, labelcolor=TXT, fontsize=fs - 0.5,
+    ax2.set_ylabel(L("spread (cents)"), color=TXT, fontsize=8.5, fontweight="bold")
+    ax2.legend(loc="upper left", facecolor=PANEL, edgecolor=AXIS, labelcolor=LEGTXT, fontsize=fs - 0.5,
                framealpha=0.9, ncol=2)
 
     # ---- panel 3: rolling OFI
     k0, k1 = view(D.ofi_t, t_lo, t_hi)
     x, y = D.ofi_t[k0:k1], D.ofi_roll[k0:k1]
-    ax3.axhline(0, color="#555b66", lw=0.6)
+    ax3.axhline(0, color=MUTED, lw=0.6)
     ax3.fill_between(x, 0, y, where=y >= 0, step="post", color=BID, alpha=0.35)
     ax3.fill_between(x, 0, y, where=y < 0, step="post", color=ASK, alpha=0.35)
-    ax3.step(x, y, where="post", color=TXT, lw=0.5, alpha=0.8)
+    ax3.step(x, y, where="post", color=OUTLINE, lw=0.5, alpha=0.8)
     ax3.set_ylim(-D.ofi_top, D.ofi_top)
-    ax3.set_ylabel("OFI (%gs, shares)" % D.ofi_win, color=TXT, fontsize=8.5, fontweight="bold")
+    ax3.set_ylabel(L("OFI (%gs, shares)" % D.ofi_win), color=TXT, fontsize=8.5, fontweight="bold")
 
     # ---- shared time axis (labels on the bottom panel only)
     ticks = nice_ticks(D.sec0 + t_lo, D.sec0 + t_hi) - D.sec0
@@ -231,7 +255,7 @@ def render(axes, D, t_lo, t_hi, ylim, big=True, now_label=None):
     ax1.tick_params(labelbottom=False)
     ax2.tick_params(labelbottom=False)
     ax3.set_xticklabels([clock(D.sec0 + t) for t in ticks], fontsize=8)
-    ax3.set_xlabel("market time (ET)", color=TXT, fontsize=8.5, fontweight="bold")
+    ax3.set_xlabel(L("market time (ET)"), color=TXT, fontsize=8.5, fontweight="bold")
     return im
 
 
@@ -306,16 +330,21 @@ def prepare(args):
 
 def make_figure(figsize, dpi, title, badge, footer, big):
     fig = plt.figure(figsize=figsize, dpi=dpi, facecolor=BG)
-    gs = GridSpec(3, 1, height_ratios=[3.4, 1.0, 1.3], hspace=0.10,
-                  left=0.075 if big else 0.10, right=0.925 if big else 0.97,
+    if TERMINAL:
+        left, right = (0.035, 0.925) if big else (0.04, 0.915)
+    else:
+        left, right = (0.075, 0.925) if big else (0.10, 0.97)
+    gs = GridSpec(3, 1, height_ratios=[3.4, 1.0, 1.3], hspace=0.10, left=left, right=right,
                   top=0.895 if big else 0.865, bottom=0.085 if big else 0.12)
     axes = [fig.add_subplot(gs[i]) for i in range(3)]
-    fig.suptitle(title, color="white", fontsize=13 if big else 10, fontweight="bold", x=0.075 if big else 0.10,
-                 y=0.975, ha="left")
+    fig.text(left, 0.975, title, color=TITLE, fontsize=13 if big else 10, fontweight="bold", ha="left", va="top")
+    if TERMINAL:                       # thin amber rule under the header, like a terminal title bar
+        fig.add_artist(matplotlib.lines.Line2D([left, right], [0.940 if big else 0.935] * 2, color=TXT,
+                                               lw=0.9, transform=fig.transFigure))
     if badge:
-        fig.text(0.925 if big else 0.97, 0.975, badge, color="#00e5ff", fontsize=8 if big else 6.5,
-                 fontweight="bold", family="monospace", ha="right", va="top")
-    fig.text(0.01, 0.008, footer, color="#6b7685", fontsize=7 if big else 5.5)
+        fig.text(right, 0.975, badge, color=BADGE, fontsize=8 if big else 6.5, fontweight="bold",
+                 ha="right", va="top")
+    fig.text(0.01, 0.008, footer, color=MUTED if TERMINAL else "#6b7685", fontsize=7 if big else 5.5)
     return fig, axes
 
 
@@ -331,6 +360,8 @@ def main():
     ap.add_argument("--price-pad", type=float, default=0.15, help="USD margin around the quoted range")
     ap.add_argument("--ofi-window-sec", type=float, default=1.0)
     ap.add_argument("--spread-window-sec", type=float, default=1.0)
+    ap.add_argument("--theme", choices=sorted(THEMES), default="terminal",
+                    help="terminal = black/amber, price scale on the right (default); dark = softer dark theme")
     ap.add_argument("--no-heatmap", action="store_true", help="draw only the price lines and trades in panel 1")
     ap.add_argument("--gif", help="also write a scrolling animation to this path")
     ap.add_argument("--gif-start", type=float, default=0.0, help="seconds after the first sample")
@@ -339,13 +370,17 @@ def main():
     ap.add_argument("--step-ms", type=float, default=200.0, help="market ms advanced per GIF frame")
     ap.add_argument("--fps", type=int, default=12)
     args = ap.parse_args()
+    apply_theme(args.theme)
 
     D = prepare(args)
 
     # ---------------------------------------------------------------- static PNG
     fig, axes = make_figure((13, 8), 150, args.title, args.badge, args.footer, big=True)
     im = render(axes, D, 0.0, D.t_span, (D.lo, D.hi), big=True)
-    if im is not None:
+    if im is not None and TERMINAL:
+        fig.text(0.925, 0.008, L("heat: resting shares per level, log scale, dim to bright"), color=MUTED,
+                 fontsize=7, ha="right")
+    elif im is not None:
         cax = fig.add_axes([0.935, 0.50, 0.010, 0.38])
         cb = fig.colorbar(im, cax=cax)
         cb.set_label("resting shares / level", color=TXT, fontsize=8)

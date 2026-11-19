@@ -116,12 +116,45 @@ gzip -dk 01302019.NASDAQ_ITCH50.gz        # ~11 GB decompressed
 for i in 1 2 3 4 5; do ./build/itch_sim --symbol AAPL --pin 3 01302019.NASDAQ_ITCH50 | grep "book update"; done
 ```
 
+## Queue position study
+
+An optimistic simulator assumes a limit order is filled as soon as the market trades at its price. In reality the order waits behind everything that was queued before it. ITCH gives every order individually, so the queue can be reconstructed exactly.
+
+- `QueueBook` (`include/itch/queue_book.hpp`) keeps the full time-priority queue of every price level: orders live in one contiguous pool and are linked per level with 32-bit indices, so a cancel from the middle of a queue is O(1). It is cross-checked against `OrderBook` on 100k random operations (best bid/offer every step, depth every 20 steps).
+- `ShadowTracker` (`include/itch/queue_sim.hpp`) replays hypothetical orders against the real events without touching the book, and scores three fill models side by side: **touch** (optimistic: filled when anything trades at or through its price), **queue-aware** (filled only when the shares ahead of it are used up, or its level is swept) and **strict** (pessimistic: filled only when the market trades strictly through its price). The shares ahead are tracked incrementally from sequence numbers, and the tests check them against a walk of the real list.
+- `queue_study` places a 100-share order at the back of the queue at the best bid and at the best ask every second and reports the share filled within 1 to 300 seconds under each model.
+
+```bash
+gzip -dc 01302019.NASDAQ_ITCH50.gz | ./build/queue_study --symbol AAPL --from 09:35:00 --to 15:55:00 -
+```
+
+Assumptions and limits: the hypothetical order has no market impact; executions against hidden liquidity are not in the book, so fills are if anything under-counted; an execution is assumed to hit the front of its level (the tool reports how often the data contradicts that); `C` messages are treated like `E`; replaced orders lose priority; one symbol per run.
+
 ## Layout
 
 ```
-include/itch/   types, parser, order_book, latency, pipeline
-src/            order_book.cpp, latency.cpp, main.cpp
-tools/          gen_synthetic.cpp, plot_book.py
-tests/          test_main.cpp
+include/itch/   types, parser, order_book, queue_book, queue_sim, latency, pipeline
+src/            order_book.cpp, queue_book.cpp, latency.cpp, main.cpp
+tools/          gen_synthetic.cpp, plot_book.py, queue_study.cpp
+tests/          test_main.cpp, test_queue.cpp
 .github/        CI (Linux, macOS, Windows)
 ```
+
+### Results (30 Jan 2019, 09:35-15:55, 100-share orders, 1 per side per second)
+
+Share of orders filled within 1 s / 10 s, by fill model (touch / queue-aware / strict):
+
+| Symbol | Shares ahead (median) | 1 s | 10 s |
+|---|---|---|---|
+| AMZN | 50 | 11.4 / 5.9 / 5.7 | 43.5 / 33.9 / 32.5 |
+| TSLA | 100 | 13.0 / 7.5 / 6.9 | 48.9 / 40.4 / 37.6 |
+| NVDA | 106 | 22.1 / 11.0 / 9.5 | 63.4 / 53.5 / 48.1 |
+| AAPL | 242 | 28.7 / 15.6 / 11.8 | 70.4 / 62.0 / 53.1 |
+| SPY | 521 | 37.3 / 18.6 / 9.6 | 77.1 / 67.8 / 50.5 |
+| MSFT | 569 | 22.2 / 9.2 / 4.1 | 65.5 / 53.9 / 33.9 |
+
+![fill rates](docs/queue_fill_rates.png)
+
+Limitations: orders are hypothetical (no market impact) and adverse selection is not measured, so a fill rate is not P&L.
+In some symbols (MSFT, SPY most) the feed executes an order behind older ones still resting. `--audit` checks the incremental
+counter against the real queue (no stale counts in MSFT); `--no-credit` runs strict FIFO. In MSFT this moves queue-aware by at most 1.2 points; in AAPL by 0.1.
